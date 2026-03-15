@@ -34,12 +34,12 @@ export function CharacterSetup({ onComplete }: Props) {
   const steps = [
     // Step 0: Player name
     <motion.div key="player" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+      <p className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
+        Tu vas jouer le rôle de l'ami(e) qui reçoit des messages. Commence par te donner un prénom.
+      </p>
       <h3 className="text-lg font-semibold" style={{ color: "var(--color-text-primary)" }}>
         Comment tu t'appelles ?
       </h3>
-      <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
-        Ton prénom (ou un pseudo)
-      </p>
       <input
         type="text"
         value={playerName}

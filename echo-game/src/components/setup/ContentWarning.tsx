@@ -55,6 +55,26 @@ export function ContentWarning({ onAccept }: Props) {
           automatiquement.
         </p>
 
+        <div
+          className="rounded-xl p-4 mb-6 text-left"
+          style={{ backgroundColor: "var(--color-bg-secondary)" }}
+        >
+          <p
+            className="text-sm font-medium mb-2"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            Comment ça marche ?
+          </p>
+          <p
+            className="text-sm leading-relaxed"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            Tu vas incarner l'ami(e) d'une personne qui vit une relation de couple
+            qui devient progressivement toxique. Ton rôle : écouter, réagir et
+            accompagner — comme dans une vraie conversation par messages.
+          </p>
+        </div>
+
         <button
           onClick={onAccept}
           className="w-full py-3 rounded-xl font-semibold text-white transition-transform hover:scale-[1.02] active:scale-[0.98]"
