@@ -15,9 +15,9 @@ interface Props {
 }
 
 export function ChatScreen({ onChapterEnd }: Props) {
-  const { messageHistory, currentChapter } = useGameStore();
+  const messageHistory = useGameStore((s) => s.messageHistory);
+  const currentChapter = useGameStore((s) => s.currentChapter);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const hasStarted = useRef(false);
 
   const runner = useMemo(() => getChapterRunner(currentChapter), [currentChapter]);
   const {
@@ -34,11 +34,10 @@ export function ChatScreen({ onChapterEnd }: Props) {
 
   // Start processing on mount
   useEffect(() => {
-    if (!hasStarted.current) {
-      hasStarted.current = true;
-      processNext();
-    }
-  }, [processNext]);
+    const id = setTimeout(() => processNext(), 100);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Start timer when timerSeconds changes
   useEffect(() => {

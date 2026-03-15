@@ -63,7 +63,7 @@ function App() {
   };
 
   return (
-    <div className="h-full w-full max-w-lg mx-auto relative">
+    <div className="h-full w-full relative">
       <SOSButton />
 
       {screen === "welcome" && (

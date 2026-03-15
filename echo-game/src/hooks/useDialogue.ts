@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { DialogueChoice, RenderedMessage } from "../types/game";
-import { DialogueRunner } from "../engine/DialogueRunner";
+import type { DialogueChoice } from "../types/game";
+import type { RenderedMessage } from "../types/game";
+import type { DialogueRunner } from "../engine/DialogueRunner";
 import { useGameStore } from "../stores/gameStore";
 import { replaceVariables } from "../utils/textReplacer";
 
@@ -21,29 +22,40 @@ export function useDialogue(runner: DialogueRunner | null): UseDialogueReturn {
   const [currentChoices, setCurrentChoices] = useState<DialogueChoice[] | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
   const [isChapterEnd, setIsChapterEnd] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-  const { config, currentNodeId, trust, awareness, flags, addMessage, applyEffect, setCurrentNode } = useGameStore();
+  const storeRef = useRef(useGameStore.getState());
 
-  const addRenderedMessage = useCallback((
-    sender: RenderedMessage["sender"],
-    content: string,
-    type: RenderedMessage["type"] = "text"
-  ) => {
-    if (!config) return;
-    const now = new Date();
-    const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
-    addMessage({
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      sender,
-      content: replaceVariables(content, config),
-      timestamp,
-      type,
+  // Keep storeRef always up-to-date without causing re-renders
+  useEffect(() => {
+    const unsub = useGameStore.subscribe((state) => {
+      storeRef.current = state;
     });
-  }, [config, addMessage]);
+    return unsub;
+  }, []);
+
+  const scheduleTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timeoutsRef.current.delete(id);
+      fn();
+    }, ms);
+    timeoutsRef.current.add(id);
+    return id;
+  }, []);
+
+  const clearAllTimeouts = useCallback(() => {
+    for (const id of timeoutsRef.current) {
+      clearTimeout(id);
+    }
+    timeoutsRef.current.clear();
+  }, []);
+
+  // Use a ref for processNode so timeouts always call the latest version
+  const processNodeRef = useRef<(nodeId: string) => void>(() => {});
 
   const processNode = useCallback((nodeId: string) => {
-    if (!runner || !config) return;
+    const { config: cfg, trust, awareness, flags, addMessage, setCurrentNode } = storeRef.current;
+    if (!runner || !cfg) return;
 
     const node = runner.getNode(nodeId, trust, awareness, flags);
     if (!node) {
@@ -59,19 +71,38 @@ export function useDialogue(runner: DialogueRunner | null): UseDialogueReturn {
 
     const delay = node.delay ?? 1500;
 
+    const addMsg = (
+      sender: RenderedMessage["sender"],
+      content: string,
+      type: RenderedMessage["type"] = "text"
+    ) => {
+      const now = new Date();
+      const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+      addMessage({
+        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        sender,
+        content: replaceVariables(content, cfg),
+        timestamp,
+        type,
+      });
+    };
+
+    const goNext = (nextId: string | null, delayMs: number) => {
+      if (nextId) {
+        scheduleTimeout(() => processNodeRef.current(nextId), delayMs);
+      } else {
+        setIsChapterEnd(true);
+        setIsProcessing(false);
+      }
+    };
+
     switch (node.type) {
       case "incoming": {
         setShowTyping(true);
-        timeoutRef.current = setTimeout(() => {
+        scheduleTimeout(() => {
           setShowTyping(false);
-          addRenderedMessage("friend", node.content ?? "");
-          const nextId = runner.getNextNodeId(node);
-          if (nextId) {
-            processNode(nextId);
-          } else {
-            setIsChapterEnd(true);
-            setIsProcessing(false);
-          }
+          addMsg("friend", node.content ?? "");
+          goNext(runner.getNextNodeId(node), 300);
         }, delay);
         break;
       }
@@ -80,8 +111,8 @@ export function useDialogue(runner: DialogueRunner | null): UseDialogueReturn {
         setIsProcessing(false);
         const replacedChoices = (node.choices ?? []).map(c => ({
           ...c,
-          label: replaceVariables(c.label, config),
-          fullText: replaceVariables(c.fullText, config),
+          label: replaceVariables(c.label, cfg),
+          fullText: replaceVariables(c.fullText, cfg),
         }));
         setCurrentChoices(replacedChoices);
         if (node.timerSeconds) {
@@ -91,103 +122,85 @@ export function useDialogue(runner: DialogueRunner | null): UseDialogueReturn {
       }
 
       case "pause": {
-        timeoutRef.current = setTimeout(() => {
-          const nextId = runner.getNextNodeId(node);
-          if (nextId) {
-            processNode(nextId);
-          } else {
-            setIsChapterEnd(true);
-            setIsProcessing(false);
-          }
+        scheduleTimeout(() => {
+          goNext(runner.getNextNodeId(node), 0);
         }, delay);
         break;
       }
 
       case "photo": {
-        addRenderedMessage("friend", node.content ?? "", "photo");
-        const nextId = runner.getNextNodeId(node);
-        if (nextId) {
-          timeoutRef.current = setTimeout(() => processNode(nextId), 500);
-        } else {
-          setIsChapterEnd(true);
-          setIsProcessing(false);
-        }
+        addMsg("friend", node.content ?? "", "photo");
+        goNext(runner.getNextNodeId(node), 500);
         break;
       }
 
       case "status": {
-        addRenderedMessage("system", node.content ?? "", "status");
-        const nextId = runner.getNextNodeId(node);
-        if (nextId) {
-          timeoutRef.current = setTimeout(() => processNode(nextId), delay);
-        } else {
-          setIsChapterEnd(true);
-          setIsProcessing(false);
-        }
+        addMsg("system", node.content ?? "", "status");
+        goNext(runner.getNextNodeId(node), delay);
         break;
       }
 
       case "narration": {
-        addRenderedMessage("system", node.content ?? "", "narration");
-        const nextId = runner.getNextNodeId(node);
-        if (nextId) {
-          timeoutRef.current = setTimeout(() => processNode(nextId), delay);
-        } else {
-          setIsChapterEnd(true);
-          setIsProcessing(false);
-        }
+        addMsg("system", node.content ?? "", "narration");
+        goNext(runner.getNextNodeId(node), delay);
         break;
       }
 
       case "silence": {
         setShowTyping(true);
-        timeoutRef.current = setTimeout(() => {
+        scheduleTimeout(() => {
           setShowTyping(false);
-          const nextId = runner.getNextNodeId(node);
-          if (nextId) {
-            processNode(nextId);
-          } else {
-            setIsChapterEnd(true);
-            setIsProcessing(false);
-          }
+          goNext(runner.getNextNodeId(node), 0);
         }, delay);
         break;
       }
     }
-  }, [runner, config, trust, awareness, flags, addRenderedMessage, setCurrentNode]);
+  }, [runner, scheduleTimeout]);
+
+  // Keep the ref in sync
+  processNodeRef.current = processNode;
 
   const processNext = useCallback(() => {
+    const { currentNodeId } = storeRef.current;
     processNode(currentNodeId);
-  }, [processNode, currentNodeId]);
+  }, [processNode]);
 
   const makeChoice = useCallback((choice: DialogueChoice) => {
     setCurrentChoices(null);
     setTimerSeconds(null);
+    const { applyEffect, addMessage, config: cfg } = storeRef.current;
     applyEffect(choice.effect);
 
-    if (choice.fullText) {
-      addRenderedMessage("player", choice.fullText);
+    if (choice.fullText && cfg) {
+      const now = new Date();
+      const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+      addMessage({
+        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        sender: "player",
+        content: replaceVariables(choice.fullText, cfg),
+        timestamp,
+        type: "text",
+      });
     }
 
-    timeoutRef.current = setTimeout(() => {
-      processNode(choice.next);
+    scheduleTimeout(() => {
+      processNodeRef.current(choice.next);
     }, 500);
-  }, [applyEffect, addRenderedMessage, processNode]);
+  }, [scheduleTimeout]);
 
   const handleTimerExpire = useCallback(() => {
     if (currentChoices && currentChoices.length > 0) {
-      // Pick the last choice (usually silence/no response)
       const silenceChoice = currentChoices.find(c => c.fullText === "") ?? currentChoices[currentChoices.length - 1];
       makeChoice(silenceChoice);
     }
   }, [currentChoices, makeChoice]);
 
-  // Cleanup timeouts
+  // Cleanup all timeouts on unmount
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      clearAllTimeouts();
     };
-  }, []);
+  }, [clearAllTimeouts]);
 
   return {
     isProcessing,
